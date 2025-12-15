@@ -128,10 +128,25 @@ Preferred Genre: "${genre || "Any"}"
 Candidate Songs:
 ${candidates}
 
-Task 1: Analyze the user's input and determine a visual "Vibe".
-Task 2: Select the TOP 6 songs that best match this vibe.
+Task 1: Analyze the user's input and determine a clear visual and emotional "vibe".
+Task 2: Select the TOP 8 songs that best match this vibe.
 
-Return STRICTLY raw JSON in this exact format:
+Color Rules (VERY IMPORTANT):
+- You must return a BACKGROUND color only.
+- The background color MUST have high contrast with white text (#FFFFFF).
+- Choose deep, dark, or saturated colors (avoid light, pastel, or neon shades).
+- The color should visually represent the mood (e.g. dark blue for calm, deep purple for mysterious, charcoal for melancholic, deep red for intense, forest green for grounded).
+- Do NOT choose colors where white text would be hard to read.
+
+Song Rules:
+- Pick songs that strongly match the emotional vibe.
+- For each song, write ONE short sentence explaining why it fits the vibe.
+
+Output Rules:
+- Return STRICTLY raw JSON.
+- Do NOT include markdown, comments, or extra text.
+- Follow the EXACT structure below.
+
 {
   "theme": {
     "moodName": "Short mood name",

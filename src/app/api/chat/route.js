@@ -1,3 +1,5 @@
+// app/api/recommend/route.js
+
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import Groq from "groq-sdk";
 import { createClient } from "@supabase/supabase-js";
@@ -26,12 +28,12 @@ const supabase = createClient(
 );
 
 /* ======================================================
-   GEMINI CURATION
+   GEMINI IMPLEMENTATION
 ====================================================== */
 
-async function curateWithGemini(prompt) {
+async function getThemeAndRecommendationsGemini(prompt) {
   const model = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash",
+    model: "gemini-2.5-flash-lite",
   });
 
   const result = await model.generateContent({
@@ -48,13 +50,13 @@ async function curateWithGemini(prompt) {
 }
 
 /* ======================================================
-   GROQ CURATION
+   GROQ IMPLEMENTATION
 ====================================================== */
 
-async function curateWithGroq(prompt) {
+async function getThemeAndRecommendationsGroq(prompt) {
   const completion = await groq.chat.completions.create({
     model: "llama-3.1-8b-instant",
-    temperature: 0.6,
+    temperature: 0.7,
     messages: [
       {
         role: "system",
@@ -78,12 +80,12 @@ async function curateWithGroq(prompt) {
    PROVIDER ROUTER
 ====================================================== */
 
-async function curateSongs(prompt) {
+async function getThemeAndRecommendations(prompt) {
   if (PROVIDER === "groq") {
-    return curateWithGroq(prompt);
+    return getThemeAndRecommendationsGroq(prompt);
   }
 
-  return curateWithGemini(prompt);
+  return getThemeAndRecommendationsGemini(prompt);
 }
 
 /* ======================================================
@@ -92,18 +94,9 @@ async function curateSongs(prompt) {
 
 export async function POST(req) {
   try {
-    /* ---------- 1. INPUT ---------- */
-
     const { mood, genre } = await req.json();
 
-    if (!mood) {
-      return NextResponse.json(
-        { error: "Mood is required" },
-        { status: 400 }
-      );
-    }
-
-    /* ---------- 2. EMBEDDINGS (Gemini only) ---------- */
+    /* ---------- 1. EMBEDDINGS (Gemini only) ---------- */
 
     const embeddingModel = genAI.getGenerativeModel({
       model: "text-embedding-004",
@@ -112,70 +105,76 @@ export async function POST(req) {
     const embeddingResult = await embeddingModel.embedContent(mood);
     const userVector = embeddingResult.embedding.values;
 
-    /* ---------- 3. VECTOR SEARCH ---------- */
+    /* ---------- 2. VECTOR SEARCH (SUPABASE) ---------- */
 
     const { data: songs, error } = await supabase.rpc("match_songs", {
       query_embedding: userVector,
-      match_threshold: 0.25,
-      match_count: 50,
+      match_threshold: 0.2,
+      match_count: 20,
     });
 
     if (error) throw error;
-    if (!songs || songs.length === 0) {
-      return NextResponse.json({ recommendations: [] });
-    }
 
-    /* ---------- 4. PROMPT ---------- */
+    /* ---------- 3. PROMPT ---------- */
 
     const candidates = songs
       .map((s, i) => `ID ${i}: "${s.title}" by "${s.artist}"`)
       .join("\n");
 
     const prompt = `
-You are an expert Music Curator.
+User Input: "${mood}"
+Preferred Genre: "${genre || "pop"}"
+preferred language: "english"
 
-User Mood: "${mood}"
-User Preferred Genre: "${genre || "Any"}"
-
-Here are 50 candidate songs selected based on lyrical similarity:
+Candidate Songs:
 ${candidates}
 
-TASK:
-1. Select the BEST 5-10 songs that match BOTH the user's mood AND genre preference.
-2. If the user prefers a genre, STRICTLY exclude songs from other genres.
-3. For each selected song, write a single-sentence explanation describing the vibe match.
-4. Return ONLY valid raw JSON in this format:
+Task 1: Analyze the user's input and determine a clear visual and emotional "vibe".
+Task 2: Select the TOP 8 songs that best match this vibe.
 
-[
-  {
-    "title": "Song Name",
-    "artist": "Artist Name",
-    "reason": "Why this song fits the mood and genre"
-  }
-]
+Color Rules (VERY IMPORTANT):
+- You must return a BACKGROUND color only.
+- The background color MUST have high contrast with white text (#FFFFFF).
+- Choose deep, dark, or saturated colors (avoid light, pastel, or neon shades).
+- The color should visually represent the mood (e.g. dark blue for calm, deep purple for mysterious, charcoal for melancholic, deep red for intense, forest green for grounded).
+- Do NOT choose colors where white text would be hard to read.
+
+Song Rules:
+- Pick songs that strongly match the emotional vibe.
+- For each song, write ONE short sentence explaining why it fits the vibe.
+
+Output Rules:
+- Return STRICTLY raw JSON.
+- Do NOT include markdown, comments, or extra text.
+- Follow the EXACT structure below.
+
+{
+  "theme": {
+    "moodName": "Short mood name",
+    "hexColor": "#RRGGBB"
+  },
+  "recommendations": [
+    {
+      "title": "Exact Title",
+      "artist": "Exact Artist",
+      "reason": "Short reason"
+    }
+  ]
+}
 `;
 
-    /* ---------- 5. LLM CURATION ---------- */
+    /* ---------- 4. LLM CALL ---------- */
 
-    const recommendations = await curateSongs(prompt);
+    const data = await getThemeAndRecommendations(prompt);
 
-    /* ---------- 6. ADD YOUTUBE LINKS ---------- */
-
-    const finalRecommendations = recommendations.map((rec) => ({
-      ...rec,
-      link: `https://www.youtube.com/results?search_query=${encodeURIComponent(
-        `${rec.title} ${rec.artist} official audio`
-      )}`,
-    }));
-
-    return NextResponse.json({ recommendations: finalRecommendations });
-
+    return NextResponse.json(data);
   } catch (error) {
-    console.error("Mood Curator API Error:", error);
+    console.error("API Error:", error);
 
-    return NextResponse.json(
-      { error: "Failed to curate playlist." },
-      { status: 500 }
-    );
+    // Safe fallback
+    return NextResponse.json({
+      theme: { moodName: "Neutral", hexColor: "#1a1a1a" },
+      recommendations: [],
+    });
   }
 }
