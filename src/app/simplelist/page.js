@@ -32,7 +32,7 @@ export default function SimpleList() {
     setRecommendations([]);
 
     try {
-      const res = await fetch("/api/chat", {
+      const res = await fetch("/api/lyricsemb", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mood, genre }),
@@ -184,7 +184,7 @@ export default function SimpleList() {
                 */}
                 <a
                   href={`https://www.youtube.com/results?search_query=${encodeURIComponent(
-                    song.title + " " + song.artist + " Official Audio"
+                    song.title + " " + song.artist + " Official Music"
                   )}`}
                   target="_blank"
                   rel="noopener noreferrer"

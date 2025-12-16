@@ -13,7 +13,7 @@ export default function LandingPage() {
         <nav className="p-6 flex justify-between items-center animate-in fade-in duration-1000">
           <div className="flex items-center gap-2">
             <Music className="text-purple-400" />
-            <h1 className="text-2xl font-bold tracking-tighter">VibeSync.</h1>
+            <h1 className="text-2xl font-bold tracking-tighter">MOODic.</h1>
           </div>
           <div className="flex gap-4 text-sm font-medium">
              <Link href="/simplelist" className="hover:text-purple-300 transition">Lite Mode</Link>
@@ -42,7 +42,7 @@ export default function LandingPage() {
             </h1>
 
             <p className="text-lg text-white/60 max-w-2xl mx-auto mb-10 leading-relaxed">
-              VibeSync uses semantic AI to translate your raw emotions into the perfect sonic landscape. Choose your experience below.
+              MOODic uses semantic AI to translate your raw emotions into the perfect sonic landscape. Choose your experience below.
             </p>
 
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
@@ -94,7 +94,7 @@ export default function LandingPage() {
         </div>
 
         <footer className="p-6 text-center text-white/20 text-xs">
-          © 2025 VibeSync Project. Powered by Google Gemini & Supabase.
+          © 2025 MOODic Project. Powered by Google Gemini & Supabase.
         </footer>
 
       </div>
