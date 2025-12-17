@@ -25,8 +25,29 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 );
 
+
+function cleanAndParseJSON(text) {
+  try {
+    // 1. Remove markdown code blocks
+    let cleaned = text.replace(/```json/g, "").replace(/```/g, "");
+
+    // 2. Find the first '{' and the last '}' to strip outside noise
+    const firstBrace = cleaned.indexOf("{");
+    const lastBrace = cleaned.lastIndexOf("}");
+
+    if (firstBrace !== -1 && lastBrace !== -1) {
+      cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+    }
+
+    // 3. Attempt parse
+    return JSON.parse(cleaned);
+  } catch (e) {
+    console.error("JSON Parsing Failed on text:", text);
+    throw new Error("Model returned invalid JSON structure");
+  }
+}
 /* ======================================================
-   GEMINI IMPLEMENTATION
+   GEMINI HELPER
 ====================================================== */
 
 async function getThemeAndRecommendationsGemini(prompt) {
@@ -41,14 +62,14 @@ async function getThemeAndRecommendationsGemini(prompt) {
     },
   });
 
-  let text = result.response.text();
-  text = text.replace(/```json/g, "").replace(/```/g, "").trim();
-
-  return JSON.parse(text);
+  const text = result.response.text();
+  return cleanAndParseJSON(text);
 }
 
+
+
 /* ======================================================
-   GROQ IMPLEMENTATION
+   GROQ HELPER
 ====================================================== */
 
 async function getThemeAndRecommendationsGroq(prompt) {
@@ -68,10 +89,8 @@ async function getThemeAndRecommendationsGroq(prompt) {
     ],
   });
 
-  let text = completion.choices[0].message.content;
-  text = text.replace(/```json/g, "").replace(/```/g, "").trim();
-
-  return JSON.parse(text);
+  const text = completion.choices[0].message.content;
+  return cleanAndParseJSON(text);
 }
 
 /* ======================================================
@@ -86,7 +105,7 @@ async function getThemeAndRecommendations(prompt) {
 }
 
 /* ======================================================
-   API HANDLER
+   MAIN API HANDLER
 ====================================================== */
 
 export async function POST(req) {
@@ -94,7 +113,7 @@ export async function POST(req) {
     const { mood, genre } = await req.json();
 
     /* ---------- 1. CREATE USER EMBEDDING ---------- */
-
+    // Convert the user's mood text into a vector
     const embeddingModel = genAI.getGenerativeModel({
       model: "text-embedding-004",
     });
@@ -102,59 +121,36 @@ export async function POST(req) {
     const embeddingResult = await embeddingModel.embedContent(mood);
     const userVector = embeddingResult.embedding.values;
 
-    /* ---------- 2. VECTOR SEARCH (MERGED STRATEGY) ---------- */
-
-    // 2.1 Lyrics-heavy search (primary)
-    const lyricsSearch = await supabase.rpc("match_songs_lyrics", {
+    /* ---------- 2. HYBRID VECTOR SEARCH (Optimized) ---------- */
+    // We call the single SQL function we created.
+    // This searches both lyrics and overall vibe in one go.
+    
+    const { data: songs, error } = await supabase.rpc("match_hybrid_songs", {
       query_embedding: userVector,
-      match_threshold: 0.25,
-      match_count: 20,
+      match_threshold: 0.20, // Adjust sensitivity
+      match_count: 20,       // Pool of candidates
+      lyrics_weight: 1.1     // 10% score boost if matched via lyrics
     });
 
-    if (lyricsSearch.error) throw lyricsSearch.error;
+    if (error) {
+      console.error("Supabase RPC Error:", error);
+      throw new Error(`Database search failed: ${error.message}`);
+    }
 
-    // 2.2 Normal embedding search (fallback)
-    const normalSearch = await supabase.rpc("match_songs", {
-      query_embedding: userVector,
-      match_threshold: 0.2,
-      match_count: 20,
-    });
-
-    if (normalSearch.error) throw normalSearch.error;
-
-    // 2.3 Merge + dedupe (lyrics results have priority)
-    const mergedMap = new Map();
-
-    (lyricsSearch.data || []).forEach((song) => {
-      mergedMap.set(song.id, {
-        ...song,
-        source: "lyrics",
+    if (!songs || songs.length === 0) {
+      // Return 200 with empty list if no songs found (handled gracefully by UI)
+      return NextResponse.json({
+         theme: { moodName: "Neutral", hexColor: "#1f2937" },
+         recommendations: [] 
       });
-    });
-
-    (normalSearch.data || []).forEach((song) => {
-      if (!mergedMap.has(song.id)) {
-        mergedMap.set(song.id, {
-          ...song,
-          source: "normal",
-        });
-      }
-    });
-
-    // 2.4 Final ranked list
-    const songs = Array.from(mergedMap.values())
-      .sort((a, b) => {
-        if (a.source !== b.source) {
-          return a.source === "lyrics" ? -1 : 1;
-        }
-        return b.similarity - a.similarity;
-      })
-      .slice(0, 20);
+    }
 
     /* ---------- 3. PROMPT BUILD ---------- */
+    // Sort candidates by the weighted similarity score returned by DB
+    const sortedSongs = songs.sort((a, b) => b.similarity - a.similarity);
 
-    const candidates = songs
-      .map((s, i) => `ID ${i}: "${s.title}" by "${s.artist}"`)
+    const candidates = sortedSongs
+      .map((s, i) => `ID ${i}: "${s.title}" by "${s.artist}" [Matched via: ${s.source}]`)
       .join("\n");
 
     const prompt = `
@@ -162,11 +158,11 @@ User Input: "${mood}"
 Preferred Genre: "${genre || "pop"}"
 Preferred Language: "english"
 
-Candidate Songs:
+Candidate Songs (ranked by similarity):
 ${candidates}
 
 Task 1: Analyze the user's input and determine a clear visual and emotional "vibe".
-Task 2: Select the TOP 8 songs that best match this vibe.
+Task 2: Select the TOP 8 songs from the candidates that best match this vibe.
 
 Color Rules (VERY IMPORTANT):
 - Return ONLY a BACKGROUND color.
@@ -203,6 +199,7 @@ Output Rules:
     const data = await getThemeAndRecommendations(prompt);
 
     return NextResponse.json(data);
+
   } catch (error) {
     console.error("API Error:", error);
 
@@ -216,4 +213,3 @@ Output Rules:
     );
   }
 }
-
